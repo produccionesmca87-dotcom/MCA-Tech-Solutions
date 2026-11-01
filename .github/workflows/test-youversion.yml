@@ -105,7 +105,7 @@ jobs:
               while True:
                   params = [
                       ("language_ranges[]", "es"),
-                      ("page_size", "100")
+                      ("page_size", "50")
                   ]
 
                   if all_available:
