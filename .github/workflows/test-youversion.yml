@@ -1,0 +1,234 @@
+
+name: Comprobar conexion YouVersion
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-api:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Consultar YouVersion API
+        shell: bash
+        env:
+          YVP_APP_KEY: ${{ secrets.YVP_APP_KEY }}
+
+        run: |
+          python3 - <<'PY'
+          import os
+          import json
+          import urllib.request
+          import urllib.parse
+          import urllib.error
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          KEY = os.environ.get("YVP_APP_KEY")
+          BASE = "https://api.youversion.com/v1"
+
+          if not KEY:
+              raise SystemExit(
+                  "ERROR: No se encontro YVP_APP_KEY."
+              )
+
+          HEADERS = {
+              "X-YVP-App-Key": KEY,
+              "Accept": "application/json"
+          }
+
+          def api_get(path, params=None):
+              query = urllib.parse.urlencode(
+                  params or [], doseq=True
+              )
+
+              url = BASE + path
+
+              if query:
+                  url += "?" + query
+
+              request = urllib.request.Request(
+                  url, headers=HEADERS
+              )
+
+              try:
+                  with urllib.request.urlopen(
+                      request, timeout=30
+                  ) as response:
+
+                      body = response.read().decode("utf-8")
+
+                      if response.status == 204 or not body:
+                          return {}
+
+                      return json.loads(body)
+
+              except urllib.error.HTTPError as error:
+                  body = error.read().decode(
+                      "utf-8", errors="replace"
+                  )
+
+                  print("ERROR HTTP:", error.code)
+                  print("Detalle:", body[:600])
+
+                  if error.code == 401:
+                      raise SystemExit(
+                          "App Key no reconocida."
+                      )
+
+                  if error.code == 403:
+                      raise SystemExit(
+                          "Acceso denegado. Revisar permisos."
+                      )
+
+                  if error.code == 429:
+                      raise SystemExit(
+                          "Limite de solicitudes alcanzado."
+                      )
+
+                  raise SystemExit(
+                      f"Fallo de API: HTTP {error.code}"
+                  )
+
+              except urllib.error.URLError as error:
+                  raise SystemExit(
+                      f"Error de conexion: {error.reason}"
+                  )
+
+          def get_bibles(all_available=False):
+              results = []
+              page_token = None
+
+              while True:
+                  params = [
+                      ("language_ranges[]", "es"),
+                      ("page_size", "100")
+                  ]
+
+                  if all_available:
+                      params.append(
+                          ("all_available", "true")
+                      )
+
+                  if page_token:
+                      params.append(
+                          ("page_token", page_token)
+                      )
+
+                  data = api_get("/bibles", params)
+
+                  results.extend(data.get("data", []))
+
+                  page_token = data.get("next_page_token")
+
+                  if not page_token:
+                      break
+
+              return results
+
+          def is_rvr1960(bible):
+              fields = [
+                  bible.get("abbreviation", ""),
+                  bible.get("localized_abbreviation", ""),
+                  bible.get("localized_title", ""),
+                  bible.get("title", "")
+              ]
+
+              name = " ".join(
+                  str(value) for value in fields
+              ).lower()
+
+              return "1960" in name
+
+          print("=" * 45)
+          print("PRUEBA DE CONEXION YOUVERSION")
+          print("=" * 45)
+
+          print("App Key encontrada en GitHub Secrets.")
+          print("La clave no sera mostrada.")
+
+          print("\n1. CONSULTANDO BIBLIAS AUTORIZADAS")
+
+          licensed = get_bibles(False)
+
+          print("Biblias autorizadas en espanol:", len(licensed))
+
+          print("\n2. CONSULTANDO CATALOGO GENERAL")
+
+          catalog = get_bibles(True)
+
+          print("Biblias en catalogo:", len(catalog))
+
+          licensed_rvr = [
+              bible for bible in licensed
+              if is_rvr1960(bible)
+          ]
+
+          catalog_rvr = [
+              bible for bible in catalog
+              if is_rvr1960(bible)
+          ]
+
+          licensed_ids = {
+              bible.get("id") for bible in licensed
+          }
+
+          print("\n3. BUSCANDO RVR1960")
+
+          if not catalog_rvr:
+              print("No se encontro coincidencia RVR1960.")
+
+          for bible in catalog_rvr:
+              bible_id = bible.get("id")
+
+              print("\nNombre:",
+                    bible.get("localized_title")
+                    or bible.get("title"))
+
+              print("Abreviatura:",
+                    bible.get("abbreviation"))
+
+              print("Bible ID:", bible_id)
+
+              if bible_id in licensed_ids:
+                  print("ACCESO: AUTORIZADO PARA LA APP")
+              else:
+                  print("ACCESO: NO AUTORIZADO TODAVIA")
+
+          if licensed_rvr:
+              print("\nRVR1960 figura entre las versiones autorizadas.")
+          else:
+              print("\nRVR1960 no figura entre las versiones autorizadas.")
+
+          print("\n4. CONSULTANDO VERSICULO DEL DIA")
+
+          today = datetime.now(
+              ZoneInfo("America/Bogota")
+          )
+
+          day = today.timetuple().tm_yday
+
+          verse = api_get(
+              f"/verse-of-the-days/{day}",
+              [("language_ranges[]", "es")]
+          )
+
+          passage_id = verse.get("passage_id")
+
+          if not passage_id:
+              raise SystemExit(
+                  "No se recibio passage_id."
+              )
+
+          print("Fecha Colombia:", today.date().isoformat())
+          print("Dia del ano:", day)
+          print("Passage ID:", passage_id)
+
+          print("\n" + "=" * 45)
+          print("PRUEBA FINALIZADA CORRECTAMENTE")
+          print("=" * 45)
+
+          PY
