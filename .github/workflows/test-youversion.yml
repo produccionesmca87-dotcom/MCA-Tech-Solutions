@@ -1,378 +1,39 @@
 
-name: Comprobar conexion YouVersion
-
-on:
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-jobs:
-  check-api:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Consultar YouVersion API
-        shell: bash
-        env:
-          YVP_APP_KEY: ${{ secrets.YVP_APP_KEY }}
-
-        run: |
-          python3 - <<'PY'
-          import os
-          import json
-          import urllib.request
-          import urllib.parse
-          import urllib.error
-          from datetime import datetime
-          from zoneinfo import ZoneInfo
-
-          KEY = os.environ.get("YVP_APP_KEY")
-          BASE = "https://api.youversion.com/v1"
-
-          # ==========================================
-          # 1. VALIDAR CREDENCIAL
-          # ==========================================
-
-          if not KEY:
-              raise SystemExit(
-                  "ERROR: No se encontro YVP_APP_KEY."
-              )
-
-          HEADERS = {
-              "X-YVP-App-Key": KEY,
-              "Accept": "application/json"
-          }
-
-          # ==========================================
-          # 2. FUNCION GENERAL PARA CONSULTAR LA API
-          # ==========================================
-
-          def api_get(path, params=None):
-
-              query = urllib.parse.urlencode(
-                  params or [],
-                  doseq=True
-              )
-
-              url = BASE + path
-
-              if query:
-                  url += "?" + query
-
-              request = urllib.request.Request(
-                  url,
-                  headers=HEADERS
-              )
-
-              try:
-                  with urllib.request.urlopen(
-                      request,
-                      timeout=30
-                  ) as response:
-
-                      body = response.read().decode("utf-8")
-
-                      if response.status == 204 or not body:
-                          return {}
-
-                      return json.loads(body)
-
-              except urllib.error.HTTPError as error:
-
-                  body = error.read().decode(
-                      "utf-8",
-                      errors="replace"
-                  )
-
-                  print("ERROR HTTP:", error.code)
-                  print("Detalle:", body[:600])
-
-                  if error.code == 401:
-                      raise SystemExit(
-                          "App Key no reconocida."
-                      )
-
-                  if error.code == 403:
-                      raise SystemExit(
-                          "Acceso denegado. Revisar permisos."
-                      )
-
-                  if error.code == 412:
-                      raise SystemExit(
-                          "Aplicacion sin permisos suficientes."
-                      )
-
-                  if error.code == 429:
-                      raise SystemExit(
-                          "Limite de solicitudes alcanzado."
-                      )
-
-                  raise SystemExit(
-                      f"Fallo de API: HTTP {error.code}"
-                  )
-
-              except urllib.error.URLError as error:
-                  raise SystemExit(
-                      f"Error de conexion: {error.reason}"
-                  )
-
-          # ==========================================
-          # 3. OBTENER BIBLIAS Y PAGINACION
-          # ==========================================
-
-def probe_api(path):
-
-    url = BASE + path
-
-    request = urllib.request.Request(
-        url,
-        headers=HEADERS
-    )
-
-    try:
-        with urllib.request.urlopen(
-            request,
-            timeout=30
-        ) as response:
-
-            body = response.read().decode("utf-8")
-
-            if response.status == 204 or not body:
-                return response.status, {}
-
-            try:
-                return response.status, json.loads(body)
-            except json.JSONDecodeError:
-                return response.status, {"raw": body[:600]}
-
-    except urllib.error.HTTPError as error:
-
-        body = error.read().decode(
-            "utf-8",
-            errors="replace"
-        )
-
-        try:
-            result = json.loads(body)
-        except json.JSONDecodeError:
-            result = {"raw": body[:600]}
-
-        return error.code, result
-
-    except urllib.error.URLError as error:
-
-        return None, {"error": str(error.reason)}
-
-
-          def get_bibles(all_available=False):
-
-              results = []
-              page_token = None
-
-              while True:
-
-                  params = [
-                      ("language_ranges[]", "es"),
-                      ("page_size", "50")
-                  ]
-
-                  if all_available:
-                      params.append(
-                          ("all_available", "true")
-                      )
-
-                  if page_token:
-                      params.append(
-                          ("page_token", page_token)
-                      )
-
-                  data = api_get("/bibles", params)
-
-                  results.extend(data.get("data", []))
-
-                  page_token = data.get("next_page_token")
-
-                  if not page_token:
-                      break
-
-              return results
-
-          # ==========================================
-          # 4. IDENTIFICAR RVR1960
-          # ==========================================
-
-          def is_rvr1960(bible):
-
-              fields = [
-                  bible.get("abbreviation", ""),
-                  bible.get("localized_abbreviation", ""),
-                  bible.get("localized_title", ""),
-                  bible.get("title", ""),
-                  bible.get("info", "")
-              ]
-
-              name = " ".join(
-                  str(value) for value in fields
-              ).lower()
-
-              return "1960" in name
-
-          # ==========================================
-          # 5. MOSTRAR INFORMACION COMPLETA
-          # ==========================================
-
-          def show_bibles(label, items):
-
-              print(f"\n{label}")
-              print("=" * 45)
-
-              if not items:
-                  print("No se encontraron resultados.")
-                  return
-
-              for index, bible in enumerate(items, 1):
-
-                  print(f"\nBIBLIA NUMERO {index}")
-
-                  print(
-                      json.dumps(
-                          bible,
-                          ensure_ascii=False,
-                          indent=2,
-                          sort_keys=True
-                      )
-                  )
-
-          # ==========================================
-          # 6. INICIO DEL DIAGNOSTICO
-          # ==========================================
-
-          print("=" * 50)
-          print("PRUEBA DE CONEXION YOUVERSION")
-          print("=" * 50)
-
-          print("App Key encontrada en GitHub Secrets.")
-          print("La clave no sera mostrada.")
-
-          # ------------------------------------------
-          # BIBLIAS AUTORIZADAS
-          # ------------------------------------------
-
-          print("\n1. CONSULTANDO BIBLIAS AUTORIZADAS")
-
-          licensed = get_bibles(False)
-
-          print(
-              "Total de biblias autorizadas:",
-              len(licensed)
-          )
-
-          show_bibles(
-              "DETALLE DE BIBLIAS AUTORIZADAS",
-              licensed
-          )
-
-          # ------------------------------------------
-          # CATALOGO GENERAL
-          # ------------------------------------------
-
-          print("\n2. CONSULTANDO CATALOGO GENERAL")
-
-          catalog = get_bibles(True)
-
-          print(
-              "Total de biblias en catalogo:",
-              len(catalog)
-          )
-
-          show_bibles(
-              "DETALLE DEL CATALOGO GENERAL",
-              catalog
-          )
-
-          # ------------------------------------------
-          # BUSQUEDA RVR1960
-          # ------------------------------------------
-
-          print("\n3. BUSCANDO RVR1960")
-
-          licensed_rvr = [
-              bible for bible in licensed
-              if is_rvr1960(bible)
-          ]
-
+    
+  
           catalog_rvr = [
-              bible for bible in catalog
-              if is_rvr1960(bible)
+              bible for bible in catalog if is_rvr1960(bible)
           ]
-
           licensed_ids = {
               bible.get("id") for bible in licensed
           }
 
+          print("\n3. BUSCANDO RVR1960 EN LOS LISTADOS")
           if not catalog_rvr:
-
-              print(
-                  "RVR1960 no aparece en el catalogo "
-                  "consultado en espanol."
-              )
+              print("RVR1960 no aparece en el catalogo consultado en espanol.")
 
           for bible in catalog_rvr:
-
               bible_id = bible.get("id")
-
               print("\nVERSION ENCONTRADA")
-
               print(
                   "Titulo:",
-                  bible.get("localized_title")
-                  or bible.get("title")
+                  bible.get("localized_title") or bible.get("title")
               )
-
-              print(
-                  "Abreviatura:",
-                  bible.get("abbreviation")
-              )
-
+              print("Abreviatura:", bible.get("abbreviation"))
               print("Bible ID:", bible_id)
 
               if bible_id in licensed_ids:
-
-                  print(
-                      "ACCESO: AUTORIZADO PARA LA APP"
-                  )
-
+                  print("ACCESO: AUTORIZADO PARA LA APP")
               else:
-
-                  print(
-                      "ACCESO: NO AUTORIZADO TODAVIA"
-                  )
+                  print("ACCESO: NO AUTORIZADO TODAVIA")
 
           if licensed_rvr:
-
-              print(
-                  "\nRVR1960 figura entre las versiones "
-                  "autorizadas."
-              )
-
+              print("RVR1960 figura entre las versiones autorizadas.")
           else:
-
-              print(
-                  "\nRVR1960 no figura entre las versiones "
-                  "autorizadas."
-              )
-
-          # ------------------------------------------
-          # CONSULTAR VERSICULO DEL DIA
-          # ------------------------------------------
+              print("RVR1960 no figura entre las versiones autorizadas.")
 
           print("\n4. CONSULTANDO VERSICULO DEL DIA")
-
-          today = datetime.now(
-              ZoneInfo("America/Bogota")
-          )
-
+          today = datetime.now(ZoneInfo("America/Bogota"))
           day = today.timetuple().tm_yday
 
           verse = api_get(
@@ -381,97 +42,78 @@ def probe_api(path):
           )
 
           passage_id = verse.get("passage_id")
-
           if not passage_id:
+              raise SystemExit("No se recibio passage_id.")
 
-              raise SystemExit(
-                  "No se recibio passage_id."
-              )
-
-          print(
-              "Fecha Colombia:",
-              today.date().isoformat()
-          )
-
+          print("Fecha Colombia:", today.date().isoformat())
           print("Dia del ano:", day)
-
           print("Passage ID:", passage_id)
-
           print(
               "Imagen del versiculo:",
-              "Disponible" if verse.get("image_id")
-              else "No disponible"
+              "Disponible" if verse.get("image_id") else "No disponible"
           )
-print("\n5. PRUEBA DIRECTA RVR1960 - ID 149")
 
-meta_status, meta = probe_api("/bibles/149")
+          print("\n5. PRUEBA DIRECTA RVR1960 - ID 149")
+          meta_status, meta = probe_api("/bibles/149")
+          print("Metadatos HTTP:", meta_status)
 
-print("Metadatos HTTP:", meta_status)
+          rvr_text_status = None
 
-if meta_status == 200:
+          if meta_status == 200 and isinstance(meta, dict):
+              print("Bible ID:", meta.get("id"))
+              print(
+                  "Titulo:",
+                  meta.get("localized_title") or meta.get("title")
+              )
+              print("Abreviatura:", meta.get("abbreviation"))
 
-    print("Bible ID:", meta.get("id"))
+              passage_status, passage = probe_api(
+                  "/bibles/149/passages/JHN.3.16",
+                  [("format", "text")]
+              )
+              rvr_text_status = passage_status
+              print("Texto HTTP:", passage_status)
 
-    print(
-        "Titulo:",
-        meta.get("localized_title")
-        or meta.get("title")
-    )
+              if passage_status == 200:
+                  content = passage.get("content", "")
+                  print("RESULTADO: RVR1960 DISPONIBLE")
+                  print("Referencia:", passage.get("reference"))
+                  print("Caracteres recibidos:", len(content))
 
-    print("Abreviatura:", meta.get("abbreviation"))
+              elif passage_status == 403:
+                  print("RESULTADO: FALTA AUTORIZACION PARA EL TEXTO")
+                  print(
+                      "Detalle API:",
+                      json.dumps(passage, ensure_ascii=False)[:600]
+                  )
 
-    passage_path = (
-        "/bibles/149/passages/JHN.3.16?"
-        + urllib.parse.urlencode({"format": "text"})
-    )
+              else:
+                  print("RESPUESTA DEL TEXTO:")
+                  print(
+                      json.dumps(passage, ensure_ascii=False)[:600]
+                  )
 
-    passage_status, passage = probe_api(passage_path)
+          elif meta_status == 404:
+              print("La API no reconoce el ID 149.")
+              print("Detalle:", meta)
 
-    print("Texto HTTP:", passage_status)
-
-    if passage_status == 200:
-
-        content = passage.get("content", "")
-
-        print("RESULTADO: RVR1960 DISPONIBLE")
-        print("Referencia:", passage.get("reference"))
-        print("Caracteres recibidos:", len(content))
-
-    elif passage_status == 403:
-
-        print("RESULTADO: FALTA AUTORIZACION PARA EL TEXTO")
-        print("Detalle:", passage.get("message"))
-
-    else:
-
-        print("RESPUESTA NO ESPERADA:")
-        print(passage)
-
-elif meta_status == 404:
-
-    print("La API no reconoce el ID 149.")
-
-else:
-
-    print("Error consultando metadatos:")
-    print(meta)
-    
-          # ------------------------------------------
-          # RESUMEN
-          # ------------------------------------------
+          else:
+              print("No se pudieron consultar los metadatos.")
+              print("Detalle:", meta)
 
           print("\n" + "=" * 50)
           print("RESUMEN DEL DIAGNOSTICO")
           print("=" * 50)
-
           print("Conexion API: CORRECTA")
           print("Biblias autorizadas:", len(licensed))
           print("Biblias catalogadas:", len(catalog))
-          print("Coincidencias RVR1960:", len(catalog_rvr))
+          print("Coincidencias RVR1960 en catalogo:", len(catalog_rvr))
+          print("RVR1960 autorizada en listado:", bool(licensed_rvr))
+          print("HTTP metadatos RVR1960:", meta_status)
+          print("HTTP texto RVR1960:", rvr_text_status)
           print("Versiculo diario:", passage_id)
-
-          print("\nPRUEBA FINALIZADA CORRECTAMENTE")
-
+          print("\nPRUEBA FINALIZADA")
           print("=" * 50)
 
           PY
+
