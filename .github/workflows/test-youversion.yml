@@ -304,4 +304,41 @@ jobs:
           print("\nPRUEBA FINALIZADA")
           print("=" * 50)
 
+                    print("\n6. CONSULTANDO LICENCIA RVR1960 - ID 149")
+
+          license_status, license_data = probe_api(
+              "/licenses",
+              [("bible_id", "149")]
+          )
+
+          print("Licencias HTTP:", license_status)
+
+          if license_status == 200:
+              licenses = license_data.get("data", [])
+              print("Licencias encontradas:", len(licenses))
+
+              if licenses:
+                  for item in licenses:
+                      print(
+                          json.dumps(
+                              item,
+                              ensure_ascii=False,
+                              indent=2
+                          )
+                      )
+              else:
+                  print("No hay licencias devueltas para Bible ID 149.")
+
+          elif license_status == 204:
+              print("La API no encontro datos de licencia.")
+
+          else:
+              print("Detalle de la consulta:")
+              print(
+                  json.dumps(
+                      license_data,
+                      ensure_ascii=False,
+                      indent=2
+                  )
+              )
           PY
