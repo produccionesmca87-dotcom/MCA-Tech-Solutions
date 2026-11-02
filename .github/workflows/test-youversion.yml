@@ -1,6 +1,195 @@
+name: Comprobar conexion YouVersion
 
-    
-  
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-api:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Consultar YouVersion API
+        shell: bash
+        env:
+          YVP_APP_KEY: ${{ secrets.YVP_APP_KEY }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import json
+          import urllib.request
+          import urllib.parse
+          import urllib.error
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          KEY = os.environ.get("YVP_APP_KEY")
+          BASE = "https://api.youversion.com/v1"
+
+          if not KEY:
+              raise SystemExit(
+                  "ERROR: No se encontro YVP_APP_KEY en GitHub Secrets."
+              )
+
+          HEADERS = {
+              "X-YVP-App-Key": KEY,
+              "Accept": "application/json"
+          }
+
+          def build_url(path, params=None):
+              url = BASE + path
+              if params:
+                  query = urllib.parse.urlencode(params, doseq=True)
+                  url += "?" + query
+              return url
+
+          def api_get(path, params=None):
+              request = urllib.request.Request(
+                  build_url(path, params),
+                  headers=HEADERS
+              )
+
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      body = response.read().decode("utf-8")
+
+                      if response.status == 204 or not body:
+                          return {}
+
+                      return json.loads(body)
+
+              except urllib.error.HTTPError as error:
+                  body = error.read().decode("utf-8", errors="replace")
+                  print("ERROR HTTP:", error.code)
+                  print("Detalle:", body[:600])
+
+                  if error.code == 401:
+                      raise SystemExit("App Key no reconocida.")
+                  if error.code == 403:
+                      raise SystemExit("Acceso denegado. Revisar permisos.")
+                  if error.code == 412:
+                      raise SystemExit("Aplicacion sin permisos suficientes.")
+                  if error.code == 429:
+                      raise SystemExit("Limite de solicitudes alcanzado.")
+
+                  raise SystemExit(f"Fallo de API: HTTP {error.code}")
+
+              except urllib.error.URLError as error:
+                  raise SystemExit(
+                      f"Error de conexion: {error.reason}"
+                  )
+
+          def probe_api(path, params=None):
+              request = urllib.request.Request(
+                  build_url(path, params),
+                  headers=HEADERS
+              )
+
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      body = response.read().decode("utf-8")
+
+                      if response.status == 204 or not body:
+                          return response.status, {}
+
+                      try:
+                          return response.status, json.loads(body)
+                      except json.JSONDecodeError:
+                          return response.status, {"raw": body[:600]}
+
+              except urllib.error.HTTPError as error:
+                  body = error.read().decode("utf-8", errors="replace")
+
+                  try:
+                      result = json.loads(body)
+                  except json.JSONDecodeError:
+                      result = {"raw": body[:600]}
+
+                  return error.code, result
+
+              except urllib.error.URLError as error:
+                  return None, {"error": str(error.reason)}
+
+          def get_bibles(all_available=False):
+              results = []
+              page_token = None
+
+              while True:
+                  params = [
+                      ("language_ranges[]", "es"),
+                      ("page_size", "50")
+                  ]
+
+                  if all_available:
+                      params.append(("all_available", "true"))
+
+                  if page_token:
+                      params.append(("page_token", page_token))
+
+                  data = api_get("/bibles", params)
+                  results.extend(data.get("data", []))
+
+                  page_token = data.get("next_page_token")
+                  if not page_token:
+                      break
+
+              return results
+
+          def is_rvr1960(bible):
+              fields = [
+                  bible.get("abbreviation", ""),
+                  bible.get("localized_abbreviation", ""),
+                  bible.get("localized_title", ""),
+                  bible.get("title", ""),
+                  bible.get("info", "")
+              ]
+
+              name = " ".join(
+                  str(value) for value in fields
+              ).lower()
+
+              return "1960" in name or "rvr1960" in name
+
+          def show_bibles(label, items):
+              print(f"\n{label}")
+              print("=" * 45)
+
+              if not items:
+                  print("No se encontraron resultados.")
+                  return
+
+              for index, bible in enumerate(items, 1):
+                  print(f"\nBIBLIA NUMERO {index}")
+                  print(
+                      json.dumps(
+                          bible,
+                          ensure_ascii=False,
+                          indent=2,
+                          sort_keys=True
+                      )
+                  )
+
+          print("=" * 50)
+          print("PRUEBA DE CONEXION YOUVERSION")
+          print("=" * 50)
+          print("App Key encontrada en GitHub Secrets.")
+          print("La clave no sera mostrada.")
+
+          print("\n1. CONSULTANDO BIBLIAS AUTORIZADAS")
+          licensed = get_bibles(False)
+          print("Total de biblias autorizadas:", len(licensed))
+          show_bibles("DETALLE DE BIBLIAS AUTORIZADAS", licensed)
+
+          print("\n2. CONSULTANDO CATALOGO GENERAL")
+          catalog = get_bibles(True)
+          print("Total de biblias en catalogo:", len(catalog))
+          show_bibles("DETALLE DEL CATALOGO GENERAL", catalog)
+
+          licensed_rvr = [
+              bible for bible in licensed if is_rvr1960(bible)
+          ]
           catalog_rvr = [
               bible for bible in catalog if is_rvr1960(bible)
           ]
@@ -116,4 +305,3 @@
           print("=" * 50)
 
           PY
-
