@@ -30,6 +30,10 @@ jobs:
           KEY = os.environ.get("YVP_APP_KEY")
           BASE = "https://api.youversion.com/v1"
 
+          # ==========================================
+          # 1. VALIDAR CREDENCIAL
+          # ==========================================
+
           if not KEY:
               raise SystemExit(
                   "ERROR: No se encontro YVP_APP_KEY."
@@ -40,9 +44,15 @@ jobs:
               "Accept": "application/json"
           }
 
+          # ==========================================
+          # 2. FUNCION GENERAL PARA CONSULTAR LA API
+          # ==========================================
+
           def api_get(path, params=None):
+
               query = urllib.parse.urlencode(
-                  params or [], doseq=True
+                  params or [],
+                  doseq=True
               )
 
               url = BASE + path
@@ -51,12 +61,14 @@ jobs:
                   url += "?" + query
 
               request = urllib.request.Request(
-                  url, headers=HEADERS
+                  url,
+                  headers=HEADERS
               )
 
               try:
                   with urllib.request.urlopen(
-                      request, timeout=30
+                      request,
+                      timeout=30
                   ) as response:
 
                       body = response.read().decode("utf-8")
@@ -67,8 +79,10 @@ jobs:
                       return json.loads(body)
 
               except urllib.error.HTTPError as error:
+
                   body = error.read().decode(
-                      "utf-8", errors="replace"
+                      "utf-8",
+                      errors="replace"
                   )
 
                   print("ERROR HTTP:", error.code)
@@ -82,6 +96,11 @@ jobs:
                   if error.code == 403:
                       raise SystemExit(
                           "Acceso denegado. Revisar permisos."
+                      )
+
+                  if error.code == 412:
+                      raise SystemExit(
+                          "Aplicacion sin permisos suficientes."
                       )
 
                   if error.code == 429:
@@ -98,11 +117,17 @@ jobs:
                       f"Error de conexion: {error.reason}"
                   )
 
+          # ==========================================
+          # 3. OBTENER BIBLIAS Y PAGINACION
+          # ==========================================
+
           def get_bibles(all_available=False):
+
               results = []
               page_token = None
 
               while True:
+
                   params = [
                       ("language_ranges[]", "es"),
                       ("page_size", "50")
@@ -129,12 +154,18 @@ jobs:
 
               return results
 
+          # ==========================================
+          # 4. IDENTIFICAR RVR1960
+          # ==========================================
+
           def is_rvr1960(bible):
+
               fields = [
                   bible.get("abbreviation", ""),
                   bible.get("localized_abbreviation", ""),
                   bible.get("localized_title", ""),
-                  bible.get("title", "")
+                  bible.get("title", ""),
+                  bible.get("info", "")
               ]
 
               name = " ".join(
@@ -143,24 +174,84 @@ jobs:
 
               return "1960" in name
 
-          print("=" * 45)
+          # ==========================================
+          # 5. MOSTRAR INFORMACION COMPLETA
+          # ==========================================
+
+          def show_bibles(label, items):
+
+              print(f"\n{label}")
+              print("=" * 45)
+
+              if not items:
+                  print("No se encontraron resultados.")
+                  return
+
+              for index, bible in enumerate(items, 1):
+
+                  print(f"\nBIBLIA NUMERO {index}")
+
+                  print(
+                      json.dumps(
+                          bible,
+                          ensure_ascii=False,
+                          indent=2,
+                          sort_keys=True
+                      )
+                  )
+
+          # ==========================================
+          # 6. INICIO DEL DIAGNOSTICO
+          # ==========================================
+
+          print("=" * 50)
           print("PRUEBA DE CONEXION YOUVERSION")
-          print("=" * 45)
+          print("=" * 50)
 
           print("App Key encontrada en GitHub Secrets.")
           print("La clave no sera mostrada.")
+
+          # ------------------------------------------
+          # BIBLIAS AUTORIZADAS
+          # ------------------------------------------
 
           print("\n1. CONSULTANDO BIBLIAS AUTORIZADAS")
 
           licensed = get_bibles(False)
 
-          print("Biblias autorizadas en espanol:", len(licensed))
+          print(
+              "Total de biblias autorizadas:",
+              len(licensed)
+          )
+
+          show_bibles(
+              "DETALLE DE BIBLIAS AUTORIZADAS",
+              licensed
+          )
+
+          # ------------------------------------------
+          # CATALOGO GENERAL
+          # ------------------------------------------
 
           print("\n2. CONSULTANDO CATALOGO GENERAL")
 
           catalog = get_bibles(True)
 
-          print("Biblias en catalogo:", len(catalog))
+          print(
+              "Total de biblias en catalogo:",
+              len(catalog)
+          )
+
+          show_bibles(
+              "DETALLE DEL CATALOGO GENERAL",
+              catalog
+          )
+
+          # ------------------------------------------
+          # BUSQUEDA RVR1960
+          # ------------------------------------------
+
+          print("\n3. BUSCANDO RVR1960")
 
           licensed_rvr = [
               bible for bible in licensed
@@ -176,32 +267,61 @@ jobs:
               bible.get("id") for bible in licensed
           }
 
-          print("\n3. BUSCANDO RVR1960")
-
           if not catalog_rvr:
-              print("No se encontro coincidencia RVR1960.")
+
+              print(
+                  "RVR1960 no aparece en el catalogo "
+                  "consultado en espanol."
+              )
 
           for bible in catalog_rvr:
+
               bible_id = bible.get("id")
 
-              print("\nNombre:",
-                    bible.get("localized_title")
-                    or bible.get("title"))
+              print("\nVERSION ENCONTRADA")
 
-              print("Abreviatura:",
-                    bible.get("abbreviation"))
+              print(
+                  "Titulo:",
+                  bible.get("localized_title")
+                  or bible.get("title")
+              )
+
+              print(
+                  "Abreviatura:",
+                  bible.get("abbreviation")
+              )
 
               print("Bible ID:", bible_id)
 
               if bible_id in licensed_ids:
-                  print("ACCESO: AUTORIZADO PARA LA APP")
+
+                  print(
+                      "ACCESO: AUTORIZADO PARA LA APP"
+                  )
+
               else:
-                  print("ACCESO: NO AUTORIZADO TODAVIA")
+
+                  print(
+                      "ACCESO: NO AUTORIZADO TODAVIA"
+                  )
 
           if licensed_rvr:
-              print("\nRVR1960 figura entre las versiones autorizadas.")
+
+              print(
+                  "\nRVR1960 figura entre las versiones "
+                  "autorizadas."
+              )
+
           else:
-              print("\nRVR1960 no figura entre las versiones autorizadas.")
+
+              print(
+                  "\nRVR1960 no figura entre las versiones "
+                  "autorizadas."
+              )
+
+          # ------------------------------------------
+          # CONSULTAR VERSICULO DEL DIA
+          # ------------------------------------------
 
           print("\n4. CONSULTANDO VERSICULO DEL DIA")
 
@@ -219,16 +339,42 @@ jobs:
           passage_id = verse.get("passage_id")
 
           if not passage_id:
+
               raise SystemExit(
                   "No se recibio passage_id."
               )
 
-          print("Fecha Colombia:", today.date().isoformat())
+          print(
+              "Fecha Colombia:",
+              today.date().isoformat()
+          )
+
           print("Dia del ano:", day)
+
           print("Passage ID:", passage_id)
 
-          print("\n" + "=" * 45)
-          print("PRUEBA FINALIZADA CORRECTAMENTE")
-          print("=" * 45)
+          print(
+              "Imagen del versiculo:",
+              "Disponible" if verse.get("image_id")
+              else "No disponible"
+          )
+
+          # ------------------------------------------
+          # RESUMEN
+          # ------------------------------------------
+
+          print("\n" + "=" * 50)
+          print("RESUMEN DEL DIAGNOSTICO")
+          print("=" * 50)
+
+          print("Conexion API: CORRECTA")
+          print("Biblias autorizadas:", len(licensed))
+          print("Biblias catalogadas:", len(catalog))
+          print("Coincidencias RVR1960:", len(catalog_rvr))
+          print("Versiculo diario:", passage_id)
+
+          print("\nPRUEBA FINALIZADA CORRECTAMENTE")
+
+          print("=" * 50)
 
           PY
